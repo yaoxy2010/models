@@ -48,6 +48,15 @@ _MAX_CROP_RATIO = .85
 _MEAN_CROP_RATIO = _MIN_CROP_RATIO / _MAX_CROP_RATIO
 
 
+def _get_h_w(image_buffer):
+  """Convenience function for getting float 32 height and width from the image.
+  """
+  image_shape = tf.image.extract_jpeg_shape(image_buffer)
+  height = tf.cast(image_shape[0], tf.float32)
+  width = tf.cast(image_shape[0], tf.float32)
+  return height, width
+
+
 def _random_crop_and_flip(image):
   """Crops the given image to a random part of the image, and randomly flips.
 
@@ -58,8 +67,7 @@ def _random_crop_and_flip(image):
     3-D tensor with cropped image.
 
   """
-  image_shape = tf.image.extract_jpeg_shape(image)
-  height, width = image_shape[0], image_shape[1]
+  height, width = _get_h_w(image)
 
   # Create a random bounding box.
   #
@@ -95,8 +103,7 @@ def _central_crop(image):
   Returns:
     3-D tensor with cropped image.
   """
-  image_shape = tf.image.extract_jpeg_shape(image)
-  height, width = image_shape[0], image_shape[1]
+  height, width = _get_h_w(image)
 
   crop_height = height * _MEAN_CROP_RATIO
   offset_y = (height - crop_height) // 2
