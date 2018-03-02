@@ -114,7 +114,7 @@ def process_record_dataset(dataset, is_training, batch_size, shuffle_buffer,
 
 
 ################################################################################
-# Convenience functions building the ResNet model.
+# Convenience functions for building the ResNet model.
 ################################################################################
 def batch_norm(inputs, training, data_format):
   """Performs a batch normalization using a standard set of parameters"""
@@ -124,15 +124,6 @@ def batch_norm(inputs, training, data_format):
       inputs=inputs, axis=1 if data_format == 'channels_first' else 3,
       momentum=_BATCH_NORM_DECAY, epsilon=_BATCH_NORM_EPSILON, center=True,
       scale=True, training=training, fused=True)
-
-
-def batch_norm_relu(inputs, training, data_format, intermediate_addition=None):
-  """Performs a batch normalization followed by a ReLU."""
-  inputs = batch_norm(inputs, training, data_format)
-  if intermediate_addition is not None:
-    inputs += intermediate_addition
-  inputs = tf.nn.relu(inputs)
-  return inputs
 
 
 def fixed_padding(inputs, kernel_size, data_format):
@@ -212,13 +203,15 @@ def _building_block_v1(inputs, filters, training, projection_shortcut, strides,
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=filters, kernel_size=3, strides=strides,
       data_format=data_format)
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
 
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=filters, kernel_size=3, strides=1,
       data_format=data_format)
-  inputs = batch_norm_relu(inputs, training, data_format,
-                           intermediate_addition=shortcut)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs += shortcut
+  inputs = tf.nn.relu(inputs)
 
   return inputs
 
@@ -247,7 +240,8 @@ def _building_block_v2(inputs, filters, training, projection_shortcut, strides,
     The output tensor of the block.
   """
   shortcut = inputs
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
 
   # The projection shortcut should come after the first batch norm and ReLU
   # since it performs a 1x1 convolution.
@@ -258,7 +252,8 @@ def _building_block_v2(inputs, filters, training, projection_shortcut, strides,
       inputs=inputs, filters=filters, kernel_size=3, strides=strides,
       data_format=data_format)
 
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=filters, kernel_size=3, strides=1,
       data_format=data_format)
@@ -286,18 +281,21 @@ def _bottleneck_block_v1(inputs, filters, training, projection_shortcut,
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=filters, kernel_size=1, strides=1,
       data_format=data_format)
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
 
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=filters, kernel_size=3, strides=strides,
       data_format=data_format)
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
 
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=4 * filters, kernel_size=1, strides=1,
       data_format=data_format)
-  inputs = batch_norm_relu(inputs, training, data_format,
-                           intermediate_addition=shortcut)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs += shortcut
+  inputs = tf.nn.relu(inputs)
 
   return inputs
 
@@ -319,7 +317,8 @@ def _bottleneck_block_v2(inputs, filters, training, projection_shortcut,
       by Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun, Jul 2016.
   """
   shortcut = inputs
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
 
   # The projection shortcut should come after the first batch norm and ReLU
   # since it performs a 1x1 convolution.
@@ -330,12 +329,14 @@ def _bottleneck_block_v2(inputs, filters, training, projection_shortcut,
       inputs=inputs, filters=filters, kernel_size=1, strides=1,
       data_format=data_format)
 
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=filters, kernel_size=3, strides=strides,
       data_format=data_format)
 
-  inputs = batch_norm_relu(inputs, training, data_format)
+  inputs = batch_norm(inputs, training, data_format)
+  inputs = tf.nn.relu(inputs)
   inputs = conv2d_fixed_padding(
       inputs=inputs, filters=4 * filters, kernel_size=1, strides=1,
       data_format=data_format)
@@ -343,8 +344,8 @@ def _bottleneck_block_v2(inputs, filters, training, projection_shortcut,
   return inputs + shortcut
 
 
-def block_layer(inputs, filters, block_fn, blocks, strides, training, name,
-                data_format):
+def block_layer(inputs, filters, bottleneck, block_fn, blocks, strides,
+                training, name, data_format):
   """Creates one layer of blocks for the ResNet model.
 
   Args:
@@ -364,10 +365,9 @@ def block_layer(inputs, filters, block_fn, blocks, strides, training, name,
   Returns:
     The output tensor of the block layer.
   """
-  filters_out = filters
+
   # Bottleneck blocks end with 4x the number of filters as they start with
-  if block_fn is _bottleneck_block_v1 or block_fn is _bottleneck_block_v2:
-    filters_out *= 4
+  filters_out = filters * 4 if bottleneck else filters
 
   def projection_shortcut(inputs):
     return conv2d_fixed_padding(
@@ -409,16 +409,14 @@ class Model(object):
         if first_pool_size is None.
       second_pool_size: Pool size to be used for the second pooling layer.
       second_pool_stride: stride size for the final pooling layer
-      block_fn: Which block layer function should be used? Pass in one of
-        the two functions defined above: building_block or bottleneck_block
       block_sizes: A list containing n values, where n is the number of sets of
         block layers desired. Each value should be the number of blocks in the
         i-th set.
       block_strides: List of integers representing the desired stride size for
         each of the sets of block layers. Should be same length as block_sizes.
       final_size: The expected size of the model after the second pooling.
-      version: Integer defining the order of layers. A detailed
-        description can be found in README.md.
+      version: Integer representing which version of the ResNet network to use.
+        See README for details. Valid values: [1, 2]
       bottleneck: Use regular blocks or bottleneck blocks.
       data_format: Input format ('channels_last', 'channels_first', or None).
         If set to None, the format is dependent on whether a GPU is available.
@@ -432,8 +430,9 @@ class Model(object):
     self.resnet_version = version
     if version not in (1, 2):
       raise ValueError(
-          "Resnet version should be 1 or 2. See README.md for citations.")
+          "Resnet version should be 1 or 2. See README for citations.")
 
+    self.bottleneck = bottleneck
     if bottleneck:
       if version == 1:
         self.block_fn = _bottleneck_block_v1
@@ -491,12 +490,13 @@ class Model(object):
     for i, num_blocks in enumerate(self.block_sizes):
       num_filters = self.num_filters * (2**i)
       inputs = block_layer(
-          inputs=inputs, filters=num_filters, block_fn=self.block_fn,
-          blocks=num_blocks, strides=self.block_strides[i],
-          training=training, name='block_layer{}'.format(i + 1),
-          data_format=self.data_format)
+          inputs=inputs, filters=num_filters, bottleneck=self.bottleneck,
+          block_fn=self.block_fn, blocks=num_blocks,
+          strides=self.block_strides[i], training=training,
+          name='block_layer{}'.format(i + 1), data_format=self.data_format)
 
-    inputs = batch_norm_relu(inputs, training, self.data_format)
+    inputs = batch_norm(inputs, training, self.data_format)
+    inputs = tf.nn.relu(inputs)
     inputs = tf.layers.average_pooling2d(
         inputs=inputs, pool_size=self.second_pool_size,
         strides=self.second_pool_stride, padding='VALID',
@@ -791,5 +791,5 @@ class ResnetArgParser(argparse.ArgumentParser):
     self.add_argument(
         '-v', '--version', type=int, choices=[1, 2], dest="version",
         metavar="", default=DEFAULT_VERSION,
-        help="Version of ResNet. (1 or 2) See README.md for details."
+        help="Version of ResNet. (1 or 2) See README for details."
     )
