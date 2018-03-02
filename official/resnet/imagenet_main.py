@@ -98,14 +98,6 @@ def parse_record(raw_record, is_training):
 """
   image, label = _parse_example_proto(raw_record)
 
-  # Decode the string as an RGB JPEG.
-  # Note that the resulting image contains an unknown height and width
-  # that is set dynamically by decode_jpeg. In other words, the height
-  # and width of image is unknown at compile-time.
-  # Results in a 3-D int8 Tensor. This will be converted to a float later,
-  # during resizing.
-  image = tf.image.decode_jpeg(image, channels=_NUM_CHANNELS)
-
   image = vgg_preprocessing.preprocess_image(
       image=image,
       output_height=_DEFAULT_IMAGE_SIZE,

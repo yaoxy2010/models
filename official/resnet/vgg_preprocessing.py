@@ -76,6 +76,9 @@ def _random_crop_and_flip(image):
   offset_x = width - crop_width
 
   crop_window = tf.stack([offset_y, offset_x, crop_height, crop_width])
+
+  # Results in a 3-D int8 Tensor. This will be converted to a float later,
+  # during resizing.
   cropped = tf.image.decode_and_crop_jpeg(image, crop_window, channels=3)
 
   cropped = tf.image.random_flip_left_right(cropped)
@@ -100,6 +103,9 @@ def _central_crop(image):
   offset_x = width - crop_width
 
   crop_window = tf.stack([offset_y, offset_x, crop_height, crop_width])
+
+  # Results in a 3-D int8 Tensor. This will be converted to a float later,
+  # during resizing.
   return tf.image.decode_and_crop_jpeg(image, crop_window, channels=3)
 
 
