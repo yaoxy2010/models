@@ -40,14 +40,19 @@ _B_MEAN = 103.94
 
 _RESIZE_SIZE = 300
 
+# We want to crop an area that is at least MIN percentage of the image area,
+# but not more than MAX percentage of the image area.
+_MIN_CROP_RATIO = .40
+_MAX_CROP_RATIO = .85
+# When evaluating, use the mean as the chosen crop size.
+_MEAN_CROP_RATIO = _MIN_CROP_RATIO / _MAX_CROP_RATIO
 
-def _random_crop_and_flip(image, crop_height, crop_width):
+
+def _random_crop_and_flip(image):
   """Crops the given image to a random part of the image, and randomly flips.
 
   Args:
     image: a 3-D image tensor
-    crop_height: the new height.
-    crop_width: the new width.
 
   Returns:
     3-D tensor with cropped image.
@@ -60,37 +65,42 @@ def _random_crop_and_flip(image, crop_height, crop_width):
   # Use tf.random_uniform and not numpy.random.rand as doing the former would
   # generate random numbers at graph eval time, unlike the latter which
   # generates random numbers at graph definition time.
-  total_crop_height = (height - crop_height)
-  crop_top = tf.random_uniform([], maxval=total_crop_height + 1, dtype=tf.int32)
-  total_crop_width = (width - crop_width)
-  crop_left = tf.random_uniform([], maxval=total_crop_width + 1, dtype=tf.int32)
+  height_fraction = tf.random_uniform(
+      [], minval=_MIN_CROP_RATIO, maxval=_MAX_CROP_RATIO, dtype=tf.float32)
+  crop_height = height * height_fraction
+  offset_y = height - crop_height
 
-  cropped = tf.slice(
-      image, [crop_top, crop_left, 0], [crop_height, crop_width, -1])
+  width_fraction = tf.random_uniform(
+      [], minval=_MIN_CROP_RATIO, maxval=_MAX_CROP_RATIO, dtype=tf.float32)
+  crop_width = width * width_fraction
+  offset_x = width - crop_width
+
+  crop_window = tf.stack([offset_y, offset_x, crop_height, crop_width])
+  cropped = tf.image.decode_and_crop_jpeg(image, crop_window, channels=3)
 
   cropped = tf.image.random_flip_left_right(cropped)
   return cropped
 
 
-def _central_crop(image, crop_height, crop_width):
-  """Performs central crops of the given image list.
+def _central_crop(image):
+  """Performs central crops of the given image.
 
   Args:
     image: a 3-D image tensor
-    crop_height: the height of the image following the crop.
-    crop_width: the width of the image following the crop.
 
   Returns:
     3-D tensor with cropped image.
   """
   height, width = tf.shape(image)[0], tf.shape(image)[1]
 
-  total_crop_height = (height - crop_height)
-  crop_top = total_crop_height // 2
-  total_crop_width = (width - crop_width)
-  crop_left = total_crop_width // 2
-  return tf.slice(
-      image, [crop_top, crop_left, 0], [crop_height, crop_width, -1])
+  crop_height = height * _MEAN_CROP_RATIO
+  offset_y = height - crop_height
+
+  crop_width = width * _MEAN_CROP_RATIO
+  offset_x = width - crop_width
+
+  crop_window = tf.stack([offset_y, offset_x, crop_height, crop_width])
+  return tf.image.decode_and_crop_jpeg(image, crop_window, channels=3)
 
 
 def _mean_image_subtraction(image, means):
@@ -139,17 +149,17 @@ def preprocess_image(image, output_height, output_width, is_training=False):
   Returns:
     A preprocessed image.
   """
+  if is_training:
+    image = _random_crop_and_flip(image)
+  else:
+    image = _central_crop(image)
+
   # Note that resizing converts the image to float32
   image = tf.image.resize_images(
       image,
-      [_RESIZE_SIZE, _RESIZE_SIZE],
+      [output_height, output_width],
       method=tf.image.ResizeMethod.BILINEAR,
       align_corners=False)
-
-  if is_training:
-    image = _random_crop_and_flip(image, output_height, output_width)
-  else:
-    image = _central_crop(image, output_height, output_width)
 
   num_channels = image.get_shape().as_list()[-1]
   image.set_shape([output_height, output_width, num_channels])
