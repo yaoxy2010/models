@@ -58,7 +58,8 @@ def _random_crop_and_flip(image):
     3-D tensor with cropped image.
 
   """
-  height, width = tf.shape(image)[0], tf.shape(image)[1]
+  image_shape = tf.image.extract_jpeg_shape(image)
+  height, width = image_shape[0], image_shape[1]
 
   # Create a random bounding box.
   #
@@ -94,13 +95,14 @@ def _central_crop(image):
   Returns:
     3-D tensor with cropped image.
   """
-  height, width = tf.shape(image)[0], tf.shape(image)[1]
+  image_shape = tf.image.extract_jpeg_shape(image)
+  height, width = image_shape[0], image_shape[1]
 
   crop_height = height * _MEAN_CROP_RATIO
-  offset_y = height - crop_height
+  offset_y = (height - crop_height) // 2
 
   crop_width = width * _MEAN_CROP_RATIO
-  offset_x = width - crop_width
+  offset_x = (width - crop_width) // 2
 
   crop_window = tf.stack([offset_y, offset_x, crop_height, crop_width])
 
